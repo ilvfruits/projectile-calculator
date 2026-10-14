@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Projectile Trajectory Predictor (meters, with impact data)</title>
+<style>
+  :root { --ink:#17233b; --muted:#5b6780; --blue:#1769d2; --blue2:#eaf3ff; --green:#16834a; --border:#d7e1ef; --red:#d9362b; --purple:#8e44ad; }
+  * { box-sizing:border-box; }
+  body { margin:0; background:#f4f7fb; color:var(--ink); font:16px/1.45 system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif; }
+  .wrap { max-width:1180px; margin:0 auto; padding:28px 18px 42px; }
+  header { margin-bottom:22px; }
+  h1 { font-size:clamp(1.65rem,3vw,2.25rem); margin:0 0 6px; letter-spacing:-.03em; }
+  header p { margin:0; color:var(--muted); }
+  .layout { display:grid; grid-template-columns:minmax(290px,360px) minmax(0,1fr); gap:18px; align-items:start; }
+  .panel { background:#fff; border:1px solid var(--border); border-radius:16px; padding:22px; box-shadow:0 5px 20px #23385b0a; }
+  h2 { font-size:1.1rem; margin:0 0 16px; }
+  .field { margin-bottom:14px; }
+  label { display:flex; align-items:baseline; justify-content:space-between; gap:8px; font-weight:650; margin-bottom:6px; }
+  label small { color:var(--muted); font-weight:450; font-size:.8rem; }
+  input, select { width:100%; border:1px solid #bdcadd; border-radius:9px; padding:11px 12px; font:inherit; color:var(--ink); background:white; }
+  input:focus, select:focus { outline:3px solid #1769d225; border-color:var(--blue); }
+  input:disabled { background:#f0f3f8; color:#7c8799; cursor:not-allowed; }
+  .hint { font-size:.82rem; color:var(--muted); margin:4px 0 0; }
+  .primary { border:0; border-radius:10px; background:var(--blue); color:white; padding:12px 16px; width:100%; font:inherit; font-weight:700; cursor:pointer; margin-top:4px; }
+  .primary:hover { background:#0d55b3; }
+  .secondary { border:1px solid var(--border); background:white; border-radius:9px; padding:8px 12px; cursor:pointer; color:var(--ink); }
+  .note { background:#f0f7ff; border-radius:10px; padding:12px 13px; color:#344966; font-size:.88rem; margin-top:16px; }
+  .right { display:grid; gap:18px; }
+  .plot-head { display:flex; align-items:center; justify-content:space-between; gap:12px; margin-bottom:8px; }
+  .plot-head h2 { margin:0; }
+  canvas { display:block; width:100%; height:390px; }
+  .legend { display:flex; gap:18px; flex-wrap:wrap; color:var(--muted); font-size:.85rem; margin-top:7px; }
+  .dot { display:inline-block; width:10px; height:10px; border-radius:50%; margin-right:6px; }
+  .results { display:grid; grid-template-columns:repeat(4,minmax(0,1fr)); gap:10px; }
+  .metric { background:#f7faff; border:1px solid #e3ebf6; border-radius:12px; padding:12px; min-width:0; }
+  .metric .name { color:var(--muted); font-size:.8rem; }
+  .metric .value { font-size:1.1rem; font-weight:750; overflow-wrap:anywhere; margin-top:4px; }
+  .metric .extra { font-size:.8rem; color:#1769d2; font-weight:600; margin-top:4px; }
+  .impact-grid { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:10px; }
+  .impact-item { background:#f0f7ff; border-radius:10px; padding:12px; border:1px solid #dbe7fa; }
+  .impact-item .name { color:var(--muted); font-size:.8rem; }
+  .impact-item .value { font-size:1.05rem; font-weight:750; margin-top:4px; }
+  .status { border-radius:10px; padding:11px 13px; margin-top:14px; background:#eef8f1; color:#17683a; }
+  .status.error { background:#fff0ef; color:#a12820; }
+  .solutions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:12px; }
+  .solution { border:1px solid var(--border); border-radius:12px; padding:12px; }
+  .solution strong { display:block; margin-bottom:4px; }
+  .equations { color:var(--muted); font-size:.9rem; }
+  .equations code { color:#243c5d; white-space:normal; }
+  footer { color:var(--muted); font-size:.82rem; margin-top:18px; }
+  .badge { font-size:.75rem; padding:2px 6px; border-radius:4px; display:inline-block; margin-left:6px; }
+  .badge-max { background:#e8f5e9; color:#1b5e20; }
+  .badge-impact { background:#fff3e0; color:#e65100; }
+  @media (max-width:850px) { .layout { grid-template-columns:1fr; } canvas { height:320px; } }
+  @media (max-width:520px) { .wrap { padding:18px 11px 30px; } .panel { padding:16px; } .results { grid-template-columns:repeat(2,minmax(0,1fr)); } .impact-grid { grid-template-columns:1fr; } .solutions { grid-template-columns:1fr; } canvas { height:270px; } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <header>
+    <h1>Projectile Trajectory Predictor</h1>
+    <p>Enter any three known values. The calculator solves for the fourth and draws the trajectory. All units in meters.</p>
+  </header>
+
+  <div class="layout">
+    <section class="panel">
+      <h2>1. Set the known parameters</h2>
+      <div class="field">
+        <label for="unknown">Parameter to predict</label>
+        <select id="unknown">
+          <option value="theta">Launch angle (θ)</option>
+          <option value="h">Initial height (h)</option>
+          <option value="v">Initial velocity (v₀)</option>
+          <option value="L">Landing distance (L)</option>
+        </select>
+        <p class="hint">The selected field is calculated; enter the other three.</p>
+      </div>
+      <div class="field">
+        <label for="h">Initial height <small>h (m)</small></label>
+        <input id="h" type="number" min="0" step="any" value="0.75">
+      </div>
+      <div class="field">
+        <label for="v">Initial velocity <small>v₀ (m/s)</small></label>
+        <input id="v" type="number" min="0" step="any" value="4.5">
+      </div>
+      <div class="field">
+        <label for="theta">Launch angle <small>θ (degrees)</small></label>
+        <input id="theta" type="number" min="-89.9" max="89.9" step="any" value="35">
+      </div>
+      <div class="field">
+        <label for="L">Landing distance <small>L (m)</small></label>
+        <input id="L" type="number" min="0" step="any" value="2.5">
+      </div>
+      <button class="primary" id="solve">Calculate trajectory</button>
+      <div class="note"><strong>Model assumptions</strong><br>Gravity is fixed at <b>g = 9.81 m/s²</b> downward. Air resistance and the ball's size are ignored. The launch point is height <i>h</i> above the ground.</div>
+      <footer>For angle prediction, two valid launch angles may exist. Both will be listed and drawn when possible. Maximum height and impact data are shown for each solution.</footer>
+    </section>
+
+    <div class="right">
+      <section class="panel">
+        <div class="plot-head">
+          <h2>2. Predicted path</h2>
+          <button class="secondary" id="resetView" type="button">Reset view</button>
+        </div>
+        <canvas id="plot" aria-label="Projectile trajectory graph"></canvas>
+        <div class="legend">
+          <span><i class="dot" style="background:#1769d2"></i>Trajectory</span>
+          <span><i class="dot" style="background:#d9362b"></i>Launch point</span>
+          <span><i class="dot" style="background:#16834a"></i>Landing point</span>
+          <span><i class="dot" style="background:#8e44ad"></i>Max height</span>
+        </div>
+      </section>
+      <section class="panel">
+        <h2>3. Results</h2>
+        <div class="results">
+          <div class="metric"><div class="name">Initial height</div><div class="value" id="outH">—</div></div>
+          <div class="metric"><div class="name">Initial velocity</div><div class="value" id="outV">—</div></div>
+          <div class="metric"><div class="name">Launch angle</div><div class="value" id="outTheta">—</div></div>
+          <div class="metric"><div class="name">Landing distance</div><div class="value" id="outL">—</div></div>
+        </div>
+        <div class="metric" style="grid-column: span 4; margin-top: 10px; background: #f0f7ff;">
+          <div class="name">Maximum height reached</div>
+          <div class="value" id="outMaxHeight">—</div>
+          <div class="extra" id="outMaxHeightNote"></div>
+        </div>
+        <div class="impact-grid" id="impactPanel" style="display:none;">
+          <div class="impact-item">
+            <div class="name">Impact velocity (total)</div>
+            <div class="value" id="outImpactV">—</div>
+          </div>
+          <div class="impact-item">
+            <div class="name">Impact angle (below horizontal)</div>
+            <div class="value" id="outImpactAngle">—</div>
+          </div>
+          <div class="impact-item">
+            <div class="name">Impact velocity (x-component)</div>
+            <div class="value" id="outImpactVx">—</div>
+          </div>
+          <div class="impact-item">
+            <div class="name">Impact velocity (y-component)</div>
+            <div class="value" id="outImpactVy">—</div>
+          </div>
+        </div>
+        <div id="status" class="status" role="status">Enter three parameters and calculate.</div>
+        <div id="solutions" class="solutions"></div>
+        <div class="equations" style="margin-top:15px">
+          <b>Equations used</b><br>
+          <code>x(t) = v₀ cos(θ) · t</code><br>
+          <code>y(t) = h + v₀ sin(θ) · t − ½gt²</code><br>
+          <code>g = 9.81 m/s²</code><br>
+          <code>y<sub>max</sub> = h + (v₀ sin θ)² / (2g) &nbsp; (when v₀ sin θ &gt; 0)</code><br>
+          <code>v<sub>x</sub> = v₀ cos θ &nbsp; (constant)</code><br>
+          <code>v<sub>y</sub>(t) = v₀ sin θ − g·t</code><br>
+          <code>v<sub>impact</sub> = √(v<sub>x</sub>² + v<sub>y</sub>²)</code><br>
+          <code>φ<sub>impact</sub> = atan(|v<sub>y</sub>| / v<sub>x</sub>)</code>
+        </div>
+      </section>
+    </div>
+  </div>
+</div>
+<script>
+(() => {
+  // Use meters and m/s²
+  const g = 9.81;
+  const ids = ['h','v','theta','L'];
+  const inputs = Object.fromEntries(ids.map(id => [id, document.getElementById(id)]));
+  const unknown = document.getElementById('unknown');
+  const canvas = document.getElementById('plot');
+  const ctx = canvas.getContext('2d');
+  let currentTrajectories = [];
+  let viewReset = true;
+
+  const num = id => {
+    const value = inputs[id].value.trim();
+    return value === '' ? NaN : Number(value);
+  };
+  const fmt = (x, digits=2) => Number.isFinite(x) ? x.toLocaleString(undefined,{maximumFractionDigits:digits}) : '—';
+  const rad = deg => deg * Math.PI / 180;
+  const deg = r => r * 180 / Math.PI;
+
+  function setDisabled() {
+    ids.forEach(id => {
+      const off = id === unknown.value;
+      inputs[id].disabled = off;
+      inputs[id].required = !off;
+    });
+    calculate();
+  }
+
+  function calculate() {
+    const missing = unknown.value;
+    const p = {};
+    ids.filter(id => id !== missing).forEach(id => p[id] = num(id));
+    const status = document.getElementById('status');
+    const solutionsBox = document.getElementById('solutions');
+    const outMaxHeight = document.getElementById('outMaxHeight');
+    const outMaxHeightNote = document.getElementById('outMaxHeightNote');
+    const impactPanel = document.getElementById('impactPanel');
+    
+    solutionsBox.innerHTML = '';
+    currentTrajectories = [];
+    outMaxHeight.textContent = '—';
+    outMaxHeightNote.textContent = '';
+    impactPanel.style.display = 'none';
+
+    const bad = Object.entries(p).find(([k,v]) => !Number.isFinite(v));
+    if (bad) return showError('Please enter all three known values.');
+    if (p.h !== undefined && p.h < 0) return showError('Initial height must be zero or greater.');
+    if (p.v !== undefined && p.v <= 0) return showError('Initial velocity must be greater than zero.');
+    if (p.theta !== undefined && (p.theta <= -90 || p.theta >= 90)) return showError('Launch angle must be between −90° and 90°.');
+    if (p.L !== undefined && p.L <= 0) return showError('Landing distance must be greater than zero.');
+
+    let answers = [];
+    if (missing === 'h') {
+      const t = p.L / (p.v * Math.cos(rad(p.theta)));
+      if (!(t > 0)) return showError('These values do not describe a forward landing.');
+      const h = 0.5*g*t*t - p.v*Math.sin(rad(p.theta))*t;
+      if (h < -1e-7) return showError('These values imply a landing point above the ground launch reference; no nonnegative initial height fits.');
+      answers = [{...p,h:Math.max(0,h)}];
+    } else if (missing === 'v') {
+      const th = rad(p.theta);
+      const denom = 2*Math.cos(th)**2*(p.h + p.L*Math.tan(th));
+      if (!(denom > 0)) return showError('No physical solution: the projectile cannot reach that landing point with these height, angle, and distance values.');
+      const v = Math.sqrt(g*p.L*p.L/denom);
+      answers = [{...p,v}];
+    } else if (missing === 'L') {
+      const th = rad(p.theta);
+      const disc = (p.v*Math.sin(th))**2 + 2*g*p.h;
+      const t = (p.v*Math.sin(th) + Math.sqrt(disc))/g;
+      const L = p.v*Math.cos(th)*t;
+      if (!(t > 0) || !(L > 0)) return showError('No forward landing solution for these values.');
+      answers = [{...p,L}];
+    } else if (missing === 'theta') {
+      const A = g*p.L*p.L/(2*p.v*p.v);
+      const D = p.L*p.L - 4*A*(A-p.h);
+      const tol = 1e-9 * Math.max(1, p.L*p.L, Math.abs(4*A*(A-p.h)));
+      if (D < -tol) return showError('No real launch angle reaches this distance with the specified height and speed.');
+      const roots = Math.abs(D) <= tol ? [-(-p.L)/(2*A)] : [(p.L + Math.sqrt(Math.max(0,D)))/(2*A), (p.L - Math.sqrt(Math.max(0,D)))/(2*A)];
+      answers = [...new Set(roots.map(tan => Math.atan(tan)*180/Math.PI).map(a => Math.round(a*1e8)/1e8))]
+        .filter(a => a > -90 && a < 90)
+        .map(theta => ({...p,theta}));
+      if (!answers.length) return showError('No valid launch angle was found.');
+    }
+
+    answers.sort((a,b) => a.theta-b.theta);
+    currentTrajectories = answers.map(a => trajectory(a));
+    if (currentTrajectories.some(t => !t)) return showError('These parameters do not produce a valid forward trajectory.');
+
+    // Output summary metrics
+    const chosen = answers[0];
+    document.getElementById('outH').textContent = fmt(chosen.h)+' m';
+    document.getElementById('outV').textContent = fmt(chosen.v)+' m/s';
+    document.getElementById('outTheta').textContent = answers.length > 1 ? answers.map(a=>fmt(a.theta)+'°').join(' / ') : fmt(chosen.theta)+'°';
+    document.getElementById('outL').textContent = fmt(chosen.L)+' m';
+
+    // Maximum height calculations
+    const maxHeights = currentTrajectories.map(tr => tr.maxY);
+    const globalMax = Math.max(...maxHeights);
+    
+    if (answers.length === 1) {
+      const tr = currentTrajectories[0];
+      outMaxHeight.textContent = fmt(tr.maxY, 3) + ' m';
+      if (tr.maxY > tr.h + 1e-9) {
+        outMaxHeightNote.textContent = `Reached at apex (vy = 0). Launch height: ${fmt(tr.h)} m`;
+      } else {
+        outMaxHeightNote.textContent = `Projectile never rises above launch height (launched downward or horizontally).`;
+      }
+    } else {
+      const heightsStr = currentTrajectories.map((tr, idx) => `θ=${fmt(answers[idx].theta)}° → ${fmt(tr.maxY, 3)} m`).join('  ·  ');
+      outMaxHeight.textContent = `${fmt(globalMax, 3)} m (max)`;
+      outMaxHeightNote.textContent = heightsStr;
+    }
+
+    // ---- IMPACT VELOCITY AND ANGLE DISPLAY ----
+    if (currentTrajectories.length === 1) {
+      const tr = currentTrajectories[0];
+      document.getElementById('outImpactV').textContent = fmt(tr.impactSpeed, 3) + ' m/s';
+      document.getElementById('outImpactAngle').textContent = fmt(tr.impactAngle, 2) + '°';
+      document.getElementById('outImpactVx').textContent = fmt(tr.vx, 3) + ' m/s';
+      document.getElementById('outImpactVy').textContent = fmt(tr.impactVy, 3) + ' m/s';
+      impactPanel.style.display = 'grid';
+    } else {
+      // For multiple solutions, show the first solution's impact data, but note it in the status
+      const tr = currentTrajectories[0];
+      document.getElementById('outImpactV').textContent = fmt(tr.impactSpeed, 3) + ' m/s (sol. 1)';
+      document.getElementById('outImpactAngle').textContent = fmt(tr.impactAngle, 2) + '° (sol. 1)';
+      document.getElementById('outImpactVx').textContent = fmt(tr.vx, 3) + ' m/s';
+      document.getElementById('outImpactVy').textContent = fmt(tr.impactVy, 3) + ' m/s';
+      impactPanel.style.display = 'grid';
+    }
+    // ------------------------------------------
+
+    status.className = 'status';
+    status.textContent = answers.length > 1 ? `Found ${answers.length} valid angle solutions. Both trajectories are shown below.` : 'Solution found. The graph shows the predicted trajectory.';
+    
+    if (answers.length > 1) {
+      answers.forEach((a,i) => {
+        const tr = currentTrajectories[i];
+        const card = document.createElement('div');
+        card.className = 'solution';
+        card.innerHTML = `<strong>Angle solution ${i+1}: ${fmt(a.theta)}° 
+                          <span class="badge badge-max">max h: ${fmt(tr.maxY, 3)} m</span>
+                          <span class="badge badge-impact">impact: ${fmt(tr.impactSpeed, 3)} m/s @ ${fmt(tr.impactAngle, 2)}°</span></strong>
+                          <span>h = ${fmt(a.h)} m · v₀ = ${fmt(a.v)} m/s · L = ${fmt(a.L)} m<br>
+                          Time in air: ${fmt(tr.time,3)} s</span>`;
+        solutionsBox.appendChild(card);
+      });
+    } else {
+      const a = answers[0], tr = currentTrajectories[0];
+      const card = document.createElement('div');
+      card.className = 'solution';
+      card.innerHTML = `<strong>Flight details 
+                        <span class="badge badge-max">max height: ${fmt(tr.maxY, 3)} m</span>
+                        <span class="badge badge-impact">impact: ${fmt(tr.impactSpeed, 3)} m/s @ ${fmt(tr.impactAngle, 2)}°</span></strong>
+                        <span>Time in air: ${fmt(tr.time,3)} s<br>
+                        Maximum height above ground: ${fmt(tr.maxY, 3)} m<br>
+                        Impact velocity: ${fmt(tr.impactSpeed, 3)} m/s<br>
+                        Impact angle (below horizontal): ${fmt(tr.impactAngle, 2)}°</span>`;
+      solutionsBox.appendChild(card);
+    }
+    draw();
+    return;
+
+    function showError(message) {
+      currentTrajectories = [];
+      status.className = 'status error';
+      status.textContent = message;
+      ['outH','outV','outTheta','outL'].forEach(id => document.getElementById(id).textContent='—');
+      outMaxHeight.textContent = '—';
+      outMaxHeightNote.textContent = '';
+      impactPanel.style.display = 'none';
+      draw();
+    }
+  }
+
+  function trajectory(a) {
+    const th = rad(a.theta);
+    const vx = a.v*Math.cos(th), vy = a.v*Math.sin(th);
+    if (!(vx > 0)) return null;
+    const disc = vy*vy + 2*g*a.h;
+    const t = (vy + Math.sqrt(disc))/g;
+    if (!(t > 0) || !Number.isFinite(t)) return null;
+    const L = vx*t;
+    const points = [];
+    const steps = 100;
+    for (let i=0;i<=steps;i++) {
+      const time = t*i/steps;
+      points.push({x:vx*time, y:a.h+vy*time-0.5*g*time*time});
+    }
+    
+    // Maximum height calculation
+    const maxY = vy > 0 ? a.h + (vy * vy) / (2 * g) : a.h;
+    
+    // ---- IMPACT VELOCITY AND ANGLE ----
+    // Vertical velocity at impact (y = 0)
+    const impactVy = vy - g * t;
+    // Total impact speed
+    const impactSpeed = Math.sqrt(vx*vx + impactVy*impactVy);
+    // Impact angle below horizontal (positive value)
+    const impactAngle = Math.abs(deg(Math.atan2(Math.abs(impactVy), vx)));
+    // ------------------------------------
+    
+    return {points, time:t, L, h:a.h, maxY, theta:a.theta, vy, vx, impactVy, impactSpeed, impactAngle};
+  }
+
+  function draw() {
+    const rect = canvas.getBoundingClientRect();
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.max(1, Math.round(rect.width*dpr));
+    canvas.height = Math.max(1, Math.round(rect.height*dpr));
+    ctx.setTransform(dpr,0,0,dpr,0,0);
+    const W=rect.width, H=rect.height;
+    ctx.clearRect(0,0,W,H);
+    ctx.fillStyle='#fff'; ctx.fillRect(0,0,W,H);
+    const pad={l:58,r:22,t:22,b:48};
+    const plotW=W-pad.l-pad.r, plotH=H-pad.t-pad.b;
+    if (!currentTrajectories.length) {
+      ctx.fillStyle='#718096'; ctx.font='15px system-ui'; ctx.textAlign='center';
+      ctx.fillText('Your trajectory will appear here',W/2,H/2);
+      return;
+    }
+    const maxX=Math.max(...currentTrajectories.map(t=>t.L))*1.08 || 1;
+    const maxY=Math.max(...currentTrajectories.map(t => t.maxY), ...currentTrajectories.flatMap(t=>t.points.map(p=>p.y)), ...currentTrajectories.map(t=>t.h), 1)*1.16;
+    const sx=x=>pad.l+x/maxX*plotW;
+    const sy=y=>pad.t+plotH-y/maxY*plotH;
+    ctx.strokeStyle='#e7edf5'; ctx.lineWidth=1; ctx.fillStyle='#66758b'; ctx.font='11px system-ui';
+    ctx.textAlign='right'; ctx.textBaseline='middle';
+    for(let i=0;i<=4;i++){
+      const y=maxY*i/4, py=sy(y);
+      ctx.beginPath();ctx.moveTo(pad.l,py);ctx.lineTo(W-pad.r,py);ctx.stroke();
+      ctx.fillText(fmt(y,1),pad.l-8,py);
+    }
+    ctx.textAlign='center';ctx.textBaseline='top';
+    for(let i=0;i<=4;i++){
+      const x=maxX*i/4, px=sx(x);
+      ctx.beginPath();ctx.moveTo(px,pad.t);ctx.lineTo(px,pad.t+plotH);ctx.stroke();
+      ctx.fillText(fmt(x,1),px,pad.t+plotH+8);
+    }
+    ctx.strokeStyle='#4b5870';ctx.lineWidth=1.6;
+    ctx.beginPath();ctx.moveTo(pad.l,pad.t);ctx.lineTo(pad.l,pad.t+plotH);ctx.lineTo(W-pad.r,pad.t+plotH);ctx.stroke();
+    ctx.fillStyle='#334155';ctx.font='12px system-ui';ctx.textAlign='center';
+    ctx.fillText('Horizontal distance, x (m)',pad.l+plotW/2,H-17);
+    ctx.save();ctx.translate(15,pad.t+plotH/2);ctx.rotate(-Math.PI/2);ctx.fillText('Height above ground, y (m)',0,0);ctx.restore();
+
+    const colors=['#1769d2','#e08a18'];
+    currentTrajectories.forEach((tr,i)=>{
+      ctx.strokeStyle=colors[i%colors.length];ctx.lineWidth=2.7;ctx.beginPath();
+      tr.points.forEach((p,j)=>{if(j===0)ctx.moveTo(sx(p.x),sy(p.y));else ctx.lineTo(sx(p.x),sy(p.y));});
+      ctx.stroke();
+      
+      // Launch point (red)
+      ctx.fillStyle='#d9362b';ctx.beginPath();ctx.arc(sx(0),sy(tr.h),4.5,0,2*Math.PI);ctx.fill();
+      
+      // Landing point (green)
+      ctx.fillStyle='#16834a';ctx.beginPath();ctx.arc(sx(tr.L),sy(0),4.5,0,2*Math.PI);ctx.fill();
+      
+      // Maximum height marker (purple)
+      let maxPoint = tr.points.reduce((best, p) => p.y > best.y ? p : best, tr.points[0]);
+      ctx.fillStyle='#8e44ad';
+      ctx.beginPath();
+      ctx.arc(sx(maxPoint.x), sy(maxPoint.y), 5, 0, 2*Math.PI);
+      ctx.fill();
+      
+      ctx.fillStyle='#6a1b9a';
+      ctx.font='bold 11px system-ui';
+      ctx.textAlign='left';
+      ctx.textBaseline='bottom';
+      ctx.fillText(`max: ${fmt(tr.maxY, 3)} m`, sx(maxPoint.x) + 8, sy(maxPoint.y) - 4);
+    });
+  }
+
+  unknown.addEventListener('change',setDisabled);
+  document.getElementById('solve').addEventListener('click',calculate);
+  document.getElementById('resetView').addEventListener('click',draw);
+  window.addEventListener('resize',draw);
+  setDisabled();
+})();
+</script>
+</body>
+</html>
