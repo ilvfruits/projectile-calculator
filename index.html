@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Projectile Trajectory Predictor (meters, with impact data)</title>
+<title>Projectile Trajectory Predictor</title>
 <style>
   :root { --ink:#17233b; --muted:#5b6780; --blue:#1769d2; --blue2:#eaf3ff; --green:#16834a; --border:#d7e1ef; --red:#d9362b; --purple:#8e44ad; }
   * { box-sizing:border-box; }
@@ -44,7 +44,9 @@
   .status { border-radius:10px; padding:11px 13px; margin-top:14px; background:#eef8f1; color:#17683a; }
   .status.error { background:#fff0ef; color:#a12820; }
   .solutions { display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:10px; margin-top:12px; }
-  .solution { border:1px solid var(--border); border-radius:12px; padding:12px; }
+  .solution { border:1px solid var(--border); border-radius:12px; padding:12px; cursor:pointer; transition:background .15s, border-color .15s, box-shadow .15s; }
+  .solution:hover { background:#f7faff; }
+  .solution.active { border-color:var(--blue); background:#eaf3ff; box-shadow:0 0 0 2px #1769d225; }
   .solution strong { display:block; margin-bottom:4px; }
   .equations { color:var(--muted); font-size:.9rem; }
   .equations code { color:#243c5d; white-space:normal; }
@@ -52,6 +54,7 @@
   .badge { font-size:.75rem; padding:2px 6px; border-radius:4px; display:inline-block; margin-left:6px; }
   .badge-max { background:#e8f5e9; color:#1b5e20; }
   .badge-impact { background:#fff3e0; color:#e65100; }
+  .solution .hint-pick { font-size:.75rem; color:var(--blue); font-weight:600; margin-top:6px; display:block; }
   @media (max-width:850px) { .layout { grid-template-columns:1fr; } canvas { height:320px; } }
   @media (max-width:520px) { .wrap { padding:18px 11px 30px; } .panel { padding:16px; } .results { grid-template-columns:repeat(2,minmax(0,1fr)); } .impact-grid { grid-template-columns:1fr; } .solutions { grid-template-columns:1fr; } canvas { height:270px; } }
 </style>
@@ -94,7 +97,7 @@
       </div>
       <button class="primary" id="solve">Calculate trajectory</button>
       <div class="note"><strong>Model assumptions</strong><br>Gravity is fixed at <b>g = 9.81 m/s²</b> downward. Air resistance and the ball's size are ignored. The launch point is height <i>h</i> above the ground.</div>
-      <footer>For angle prediction, two valid launch angles may exist. Both will be listed and drawn when possible. Maximum height and impact data are shown for each solution.</footer>
+      <footer>For angle prediction, two valid launch angles may exist. Click a solution card to switch the impact data and highlighted trajectory.</footer>
     </section>
 
     <div class="right">
@@ -105,7 +108,8 @@
         </div>
         <canvas id="plot" aria-label="Projectile trajectory graph"></canvas>
         <div class="legend">
-          <span><i class="dot" style="background:#1769d2"></i>Trajectory</span>
+          <span><i class="dot" style="background:#1769d2"></i>Trajectory (selected)</span>
+          <span><i class="dot" style="background:#e08a18"></i>Trajectory (other)</span>
           <span><i class="dot" style="background:#d9362b"></i>Launch point</span>
           <span><i class="dot" style="background:#16834a"></i>Landing point</span>
           <span><i class="dot" style="background:#8e44ad"></i>Max height</span>
@@ -169,6 +173,8 @@
   const canvas = document.getElementById('plot');
   const ctx = canvas.getContext('2d');
   let currentTrajectories = [];
+  let currentAnswers = [];
+  let selectedSolution = 0;
   let viewReset = true;
 
   const num = id => {
@@ -200,6 +206,8 @@
     
     solutionsBox.innerHTML = '';
     currentTrajectories = [];
+    currentAnswers = [];
+    selectedSolution = 0;
     outMaxHeight.textContent = '—';
     outMaxHeightNote.textContent = '';
     impactPanel.style.display = 'none';
@@ -247,83 +255,43 @@
     currentTrajectories = answers.map(a => trajectory(a));
     if (currentTrajectories.some(t => !t)) return showError('These parameters do not produce a valid forward trajectory.');
 
-    // Output summary metrics
-    const chosen = answers[0];
-    document.getElementById('outH').textContent = fmt(chosen.h)+' m';
-    document.getElementById('outV').textContent = fmt(chosen.v)+' m/s';
-    document.getElementById('outTheta').textContent = answers.length > 1 ? answers.map(a=>fmt(a.theta)+'°').join(' / ') : fmt(chosen.theta)+'°';
-    document.getElementById('outL').textContent = fmt(chosen.L)+' m';
+    currentAnswers = answers;
+    selectedSolution = 0;
 
-    // Maximum height calculations
-    const maxHeights = currentTrajectories.map(tr => tr.maxY);
-    const globalMax = Math.max(...maxHeights);
-    
-    if (answers.length === 1) {
-      const tr = currentTrajectories[0];
-      outMaxHeight.textContent = fmt(tr.maxY, 3) + ' m';
-      if (tr.maxY > tr.h + 1e-9) {
-        outMaxHeightNote.textContent = `Reached at apex (vy = 0). Launch height: ${fmt(tr.h)} m`;
-      } else {
-        outMaxHeightNote.textContent = `Projectile never rises above launch height (launched downward or horizontally).`;
-      }
-    } else {
-      const heightsStr = currentTrajectories.map((tr, idx) => `θ=${fmt(answers[idx].theta)}° → ${fmt(tr.maxY, 3)} m`).join('  ·  ');
-      outMaxHeight.textContent = `${fmt(globalMax, 3)} m (max)`;
-      outMaxHeightNote.textContent = heightsStr;
-    }
+    // Update top summary metrics to reflect the selected solution
+    refreshSummary();
 
-    // ---- IMPACT VELOCITY AND ANGLE DISPLAY ----
-    if (currentTrajectories.length === 1) {
-      const tr = currentTrajectories[0];
-      document.getElementById('outImpactV').textContent = fmt(tr.impactSpeed, 3) + ' m/s';
-      document.getElementById('outImpactAngle').textContent = fmt(tr.impactAngle, 2) + '°';
-      document.getElementById('outImpactVx').textContent = fmt(tr.vx, 3) + ' m/s';
-      document.getElementById('outImpactVy').textContent = fmt(tr.impactVy, 3) + ' m/s';
-      impactPanel.style.display = 'grid';
-    } else {
-      // For multiple solutions, show the first solution's impact data, but note it in the status
-      const tr = currentTrajectories[0];
-      document.getElementById('outImpactV').textContent = fmt(tr.impactSpeed, 3) + ' m/s (sol. 1)';
-      document.getElementById('outImpactAngle').textContent = fmt(tr.impactAngle, 2) + '° (sol. 1)';
-      document.getElementById('outImpactVx').textContent = fmt(tr.vx, 3) + ' m/s';
-      document.getElementById('outImpactVy').textContent = fmt(tr.impactVy, 3) + ' m/s';
-      impactPanel.style.display = 'grid';
-    }
-    // ------------------------------------------
+    // Update impact panel
+    updateImpactPanel();
 
     status.className = 'status';
-    status.textContent = answers.length > 1 ? `Found ${answers.length} valid angle solutions. Both trajectories are shown below.` : 'Solution found. The graph shows the predicted trajectory.';
-    
-    if (answers.length > 1) {
-      answers.forEach((a,i) => {
-        const tr = currentTrajectories[i];
-        const card = document.createElement('div');
-        card.className = 'solution';
-        card.innerHTML = `<strong>Angle solution ${i+1}: ${fmt(a.theta)}° 
-                          <span class="badge badge-max">max h: ${fmt(tr.maxY, 3)} m</span>
-                          <span class="badge badge-impact">impact: ${fmt(tr.impactSpeed, 3)} m/s @ ${fmt(tr.impactAngle, 2)}°</span></strong>
-                          <span>h = ${fmt(a.h)} m · v₀ = ${fmt(a.v)} m/s · L = ${fmt(a.L)} m<br>
-                          Time in air: ${fmt(tr.time,3)} s</span>`;
-        solutionsBox.appendChild(card);
-      });
-    } else {
-      const a = answers[0], tr = currentTrajectories[0];
+    status.textContent = answers.length > 1
+      ? `Found ${answers.length} valid angle solutions. Click a card below to switch which one is highlighted and shown in the impact panel.`
+      : 'Solution found. The graph shows the predicted trajectory.';
+
+    // Build solution cards (clickable)
+    answers.forEach((a, i) => {
+      const tr = currentTrajectories[i];
       const card = document.createElement('div');
-      card.className = 'solution';
-      card.innerHTML = `<strong>Flight details 
-                        <span class="badge badge-max">max height: ${fmt(tr.maxY, 3)} m</span>
+      card.className = 'solution' + (i === selectedSolution ? ' active' : '');
+      card.dataset.index = i;
+      card.innerHTML = `<strong>Angle solution ${i+1}: ${fmt(a.theta)}°
+                        <span class="badge badge-max">max h: ${fmt(tr.maxY, 3)} m</span>
                         <span class="badge badge-impact">impact: ${fmt(tr.impactSpeed, 3)} m/s @ ${fmt(tr.impactAngle, 2)}°</span></strong>
-                        <span>Time in air: ${fmt(tr.time,3)} s<br>
-                        Maximum height above ground: ${fmt(tr.maxY, 3)} m<br>
-                        Impact velocity: ${fmt(tr.impactSpeed, 3)} m/s<br>
-                        Impact angle (below horizontal): ${fmt(tr.impactAngle, 2)}°</span>`;
+                        <span>h = ${fmt(a.h)} m · v₀ = ${fmt(a.v)} m/s · L = ${fmt(a.L)} m<br>
+                        Time in air: ${fmt(tr.time, 3)} s</span>
+                        <span class="hint-pick">Click to select this solution</span>`;
+      card.addEventListener('click', () => selectSolution(i));
       solutionsBox.appendChild(card);
-    }
+    });
+
     draw();
     return;
 
     function showError(message) {
       currentTrajectories = [];
+      currentAnswers = [];
+      selectedSolution = 0;
       status.className = 'status error';
       status.textContent = message;
       ['outH','outV','outTheta','outL'].forEach(id => document.getElementById(id).textContent='—');
@@ -332,6 +300,57 @@
       impactPanel.style.display = 'none';
       draw();
     }
+  }
+
+  function selectSolution(i) {
+    if (i < 0 || i >= currentTrajectories.length) return;
+    selectedSolution = i;
+    // Update active highlight
+    const solutionsBox = document.getElementById('solutions');
+    solutionsBox.querySelectorAll('.solution').forEach(el => {
+      el.classList.toggle('active', Number(el.dataset.index) === i);
+    });
+    refreshSummary();
+    updateImpactPanel();
+    draw();
+  }
+
+  function refreshSummary() {
+    if (!currentAnswers.length) return;
+    const a = currentAnswers[selectedSolution];
+    const tr = currentTrajectories[selectedSolution];
+    document.getElementById('outH').textContent = fmt(a.h) + ' m';
+    document.getElementById('outV').textContent = fmt(a.v) + ' m/s';
+    document.getElementById('outTheta').textContent = currentAnswers.length > 1
+      ? currentAnswers.map((ans, idx) => (idx === selectedSolution ? `[${fmt(ans.theta)}°]` : `${fmt(ans.theta)}°`)).join(' / ')
+      : fmt(a.theta) + '°';
+    document.getElementById('outL').textContent = fmt(a.L) + ' m';
+
+    const outMaxHeight = document.getElementById('outMaxHeight');
+    const outMaxHeightNote = document.getElementById('outMaxHeightNote');
+    if (currentAnswers.length === 1) {
+      outMaxHeight.textContent = fmt(tr.maxY, 3) + ' m';
+      if (tr.maxY > tr.h + 1e-9) {
+        outMaxHeightNote.textContent = `Reached at apex (vy = 0). Launch height: ${fmt(tr.h)} m`;
+      } else {
+        outMaxHeightNote.textContent = `Projectile never rises above launch height (launched downward or horizontally).`;
+      }
+    } else {
+      outMaxHeight.textContent = fmt(tr.maxY, 3) + ' m (sol. ' + (selectedSolution + 1) + ')';
+      outMaxHeightNote.textContent = `Selected solution ${selectedSolution + 1} of ${currentAnswers.length}. Click a card to switch.`;
+    }
+  }
+
+  function updateImpactPanel() {
+    const panel = document.getElementById('impactPanel');
+    if (!currentTrajectories.length) { panel.style.display = 'none'; return; }
+    const tr = currentTrajectories[selectedSolution];
+    const suffix = currentTrajectories.length > 1 ? ` (sol. ${selectedSolution + 1})` : '';
+    document.getElementById('outImpactV').textContent   = fmt(tr.impactSpeed, 3) + ' m/s' + suffix;
+    document.getElementById('outImpactAngle').textContent = fmt(tr.impactAngle, 2) + '°' + suffix;
+    document.getElementById('outImpactVx').textContent  = fmt(tr.vx, 3) + ' m/s';
+    document.getElementById('outImpactVy').textContent  = fmt(tr.impactVy, 3) + ' m/s';
+    panel.style.display = 'grid';
   }
 
   function trajectory(a) {
@@ -352,14 +371,10 @@
     // Maximum height calculation
     const maxY = vy > 0 ? a.h + (vy * vy) / (2 * g) : a.h;
     
-    // ---- IMPACT VELOCITY AND ANGLE ----
-    // Vertical velocity at impact (y = 0)
+    // Impact velocity and angle
     const impactVy = vy - g * t;
-    // Total impact speed
     const impactSpeed = Math.sqrt(vx*vx + impactVy*impactVy);
-    // Impact angle below horizontal (positive value)
     const impactAngle = Math.abs(deg(Math.atan2(Math.abs(impactVy), vx)));
-    // ------------------------------------
     
     return {points, time:t, L, h:a.h, maxY, theta:a.theta, vy, vx, impactVy, impactSpeed, impactAngle};
   }
@@ -403,37 +418,59 @@
     ctx.fillText('Horizontal distance, x (m)',pad.l+plotW/2,H-17);
     ctx.save();ctx.translate(15,pad.t+plotH/2);ctx.rotate(-Math.PI/2);ctx.fillText('Height above ground, y (m)',0,0);ctx.restore();
 
-    const colors=['#1769d2','#e08a18'];
-    currentTrajectories.forEach((tr,i)=>{
-      ctx.strokeStyle=colors[i%colors.length];ctx.lineWidth=2.7;ctx.beginPath();
-      tr.points.forEach((p,j)=>{if(j===0)ctx.moveTo(sx(p.x),sy(p.y));else ctx.lineTo(sx(p.x),sy(p.y));});
-      ctx.stroke();
-      
-      // Launch point (red)
-      ctx.fillStyle='#d9362b';ctx.beginPath();ctx.arc(sx(0),sy(tr.h),4.5,0,2*Math.PI);ctx.fill();
-      
-      // Landing point (green)
-      ctx.fillStyle='#16834a';ctx.beginPath();ctx.arc(sx(tr.L),sy(0),4.5,0,2*Math.PI);ctx.fill();
-      
-      // Maximum height marker (purple)
-      let maxPoint = tr.points.reduce((best, p) => p.y > best.y ? p : best, tr.points[0]);
-      ctx.fillStyle='#8e44ad';
+    // Draw non-selected trajectories first (orange, thinner)
+    // then the selected one on top (blue, thicker)
+    const order = currentTrajectories.map((_, i) => i)
+      .sort((a, b) => (a === selectedSolution ? 1 : 0) - (b === selectedSolution ? 1 : 0));
+
+    order.forEach(i => {
+      const tr = currentTrajectories[i];
+      const isSelected = i === selectedSolution;
+      ctx.strokeStyle = isSelected ? '#1769d2' : '#e08a18';
+      ctx.lineWidth = isSelected ? 3.2 : 2.0;
+      if (!isSelected) ctx.setLineDash([6, 4]); else ctx.setLineDash([]);
       ctx.beginPath();
-      ctx.arc(sx(maxPoint.x), sy(maxPoint.y), 5, 0, 2*Math.PI);
+      tr.points.forEach((p, j) => {
+        if (j === 0) ctx.moveTo(sx(p.x), sy(p.y));
+        else ctx.lineTo(sx(p.x), sy(p.y));
+      });
+      ctx.stroke();
+      ctx.setLineDash([]);
+    });
+
+    // Markers on top of all lines
+    currentTrajectories.forEach((tr, i) => {
+      const isSelected = i === selectedSolution;
+
+      // Launch point (red)
+      ctx.fillStyle = '#d9362b';
+      ctx.beginPath(); ctx.arc(sx(0), sy(tr.h), isSelected ? 5 : 3.5, 0, 2*Math.PI); ctx.fill();
+
+      // Landing point (green)
+      ctx.fillStyle = '#16834a';
+      ctx.beginPath(); ctx.arc(sx(tr.L), sy(0), isSelected ? 5 : 3.5, 0, 2*Math.PI); ctx.fill();
+
+      // Max height marker (purple) - only full label for selected
+      let maxPoint = tr.points.reduce((best, p) => p.y > best.y ? p : best, tr.points[0]);
+      ctx.fillStyle = '#8e44ad';
+      ctx.beginPath();
+      ctx.arc(sx(maxPoint.x), sy(maxPoint.y), isSelected ? 5 : 3.5, 0, 2*Math.PI);
       ctx.fill();
-      
-      ctx.fillStyle='#6a1b9a';
-      ctx.font='bold 11px system-ui';
-      ctx.textAlign='left';
-      ctx.textBaseline='bottom';
-      ctx.fillText(`max: ${fmt(tr.maxY, 3)} m`, sx(maxPoint.x) + 8, sy(maxPoint.y) - 4);
+
+      if (isSelected) {
+        ctx.fillStyle = '#6a1b9a';
+        ctx.font = 'bold 11px system-ui';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(`max: ${fmt(tr.maxY, 3)} m`, sx(maxPoint.x) + 8, sy(maxPoint.y) - 4);
+      }
     });
   }
 
-  unknown.addEventListener('change',setDisabled);
-  document.getElementById('solve').addEventListener('click',calculate);
-  document.getElementById('resetView').addEventListener('click',draw);
-  window.addEventListener('resize',draw);
+  unknown.addEventListener('change', setDisabled);
+  document.getElementById('solve').addEventListener('click', calculate);
+  document.getElementById('resetView').addEventListener('click', draw);
+  window.addEventListener('resize', draw);
   setDisabled();
 })();
 </script>
